@@ -1,0 +1,42 @@
+# Build + deploy to Cloud Run on every push (Cloud Build trigger), or once by hand:
+#   gcloud builds submit --config cloudbuild.yaml --substitutions=_REGION=europe-west1,_SQL_INSTANCE=PROJECT:REGION:INSTANCE,_BUCKET=BUCKET
+# Create the infrastructure first with deploy/gcp-setup.sh.
+substitutions:
+  _REGION: europe-west1
+  _SERVICE: unlimited-study
+  _REPO: unlimited-study
+  _SQL_INSTANCE: ""        # PROJECT:REGION:INSTANCE
+  _BUCKET: ""
+  _ADMIN_EMAIL: ""
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA", "-t", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest", "."]
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}"]
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - --region=${_REGION}
+      - --service-account=${_SERVICE}-run@$PROJECT_ID.iam.gserviceaccount.com
+      - --add-cloudsql-instances=${_SQL_INSTANCE}
+      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=${_BUCKET},ADMIN_EMAIL=${_ADMIN_EMAIL},DB_POOL_MAX=5
+      - --set-secrets=SESSION_SECRET=study-session-secret:latest,ADMIN_PASSWORD=study-admin-password:latest,DATABASE_URL=study-database-url:latest
+      - --allow-unauthenticated
+      - --port=8080
+      - --memory=512Mi
+      - --cpu=1
+      - --cpu-boost
+      - --min-instances=1
+      - --max-instances=10
+      - --concurrency=80
+      - --timeout=3600
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
+options: { logging: CLOUD_LOGGING_ONLY }
